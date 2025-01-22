@@ -1,6 +1,6 @@
 #include <DHT.h> 
 #include <LCD_I2C.h> 
- 
+///plesee muncull 
 #define DHTTYPE DHT11 
 #define DHTPIN 5
 DHT dht(DHTPIN, DHTTYPE); 
