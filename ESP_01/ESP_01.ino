@@ -1,4 +1,4 @@
-
+// Board: Generic ESP8266 Module
 // NAPT example released to public domain
 
 #if LWIP_FEATURES && !LWIP_IPV6
