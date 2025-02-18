@@ -6,15 +6,15 @@ const int ThermistorPin = A0;  // Thermistor analog input
 const int HeaterPWM = 3;       // Change to a PWM-supported pin
 
 // PID Parameters
-double Setpoint = 30;          // Desired temperature in Celsius
+double Setpoint = 50;          // Desired temperature in Celsius
 double Input, Output;
-double Kp = 1, Ki = 2.0, Kd = 0.5; // PID tuning parameters
+double Kp = 64, Ki = 2.0, Kd = 0.0; // PID tuning parameters
 
 // Create PID object
 PID myPID(&Input, &Output, &Setpoint, Kp, Ki, Kd, DIRECT);
 
 // Thermistor Parameters
-float R1 = 10000;              // Series resistor value
+float R1 = 100000;              // Series resistor value
 float c1 = 1.009249522e-03, c2 = 2.378405444e-04, c3 = 2.019202697e-07;
 
 void setup() {
