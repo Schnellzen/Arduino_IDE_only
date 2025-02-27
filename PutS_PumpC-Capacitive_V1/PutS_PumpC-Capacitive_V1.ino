@@ -12,8 +12,13 @@ int sensor_pin_1 = A0; // Soil Sensor input at Analog PIN A0
 int sensor_pin_2 = A1; // Soil Sensor input at Analog PIN A1
 int sensor_pin_3 = A2; // Soil Sensor input at Analog PIN A2
 int sensor_pin_4 = A3; // Soil Sensor input at Analog PIN A3
+<<<<<<< HEAD
 double output_value_1, output_value_2, output_value_3, output_value_4;   //read for each analogpin
 float m1, m2, m3, m4, p1, p2, p3, p4; // mn for moisture yang kebaca di sensor n, pn for persamaan untuk sensor n
+=======
+int output_value_1, output_value_2, output_value_3, output_value_4;   //read for each analogpin
+int m1, m2, m3, m4, p1, p2, p3, p4; // mn for moisture yang kebaca di sensor n, pn for persamaan untuk sensor n
+>>>>>>> d585040ad7211027b7dc70470335a26477ad2a76
 int relayPin1 = 6;
 int relayPin2 = 3; 
 int mean1, mean2;
@@ -82,6 +87,7 @@ void mc_data_exc(){
   else{
     digitalWrite(relayPin1, HIGH);
   }
+<<<<<<< HEAD
   if(mean2 <= ideal_sm){
     digitalWrite(relayPin2, LOW);
     if(mean2 < 2){
@@ -136,6 +142,11 @@ void mc_lcd(){
 }
 
 void on_off_pump_lcd(){
+=======
+}
+
+void mc_lcd(){
+>>>>>>> d585040ad7211027b7dc70470335a26477ad2a76
   lcd.clear();
 
   lcd.setCursor(0,0); 
@@ -169,6 +180,36 @@ void on_off_pump_lcd(){
   }
 };
 
+void on_off_pump_lcd(){
+  lcd.clear();
+
+  lcd.setCursor(0,0); 
+  lcd.print("x1:"); //displaying mean1 value
+  lcd.print(mean1); 
+  lcd.print("% "); 
+
+  lcd.setCursor(0,1); 
+   if(mean1 <= ideal_sm){ 
+    lcd.print("P1 ON"); 
+  }
+  else { 
+    lcd.print("P1 OFF");
+  } 
+
+  lcd.setCursor(8,0); // set placement for 2nd motor in LCD, since it 16char with 2 line, so set to (8,0)
+  lcd.print("x2:"); //displaying mean2 value
+  lcd.print(mean2); 
+  lcd.print("% "); 
+
+  lcd.setCursor(8,1); // set placement for 2nd motor in LCD
+  if(mean2 <= ideal_sm){ 
+    lcd.print("P2 ON"); 
+  }
+  else { 
+    lcd.print("P2 OFF");  
+  }
+};
+
 void setup(){ 
   lcd.begin(); 
   Serial.begin(9600); 
@@ -188,13 +229,24 @@ void loop(){
 
   if (currentMillis - previousMillis >= interval) {
     previousMillis = currentMillis; // Reset time
+<<<<<<< HEAD
     //lcd.clear(); // delete LCD display before update to new text
+=======
+    lcd.clear(); // delete LCD display before update to new text
+>>>>>>> d585040ad7211027b7dc70470335a26477ad2a76
 
     // choose function according to state
     if (state == 0) {
       dht_data_lcd();
+<<<<<<< HEAD
     } else if (state == 1) {
       mc_lcd();
+=======
+      lcd.clear();
+    } else if (state == 1) {
+      mc_lcd();
+      lcd.clear();
+>>>>>>> d585040ad7211027b7dc70470335a26477ad2a76
     } else if (state == 2) {
       on_off_pump_lcd();
     }
