@@ -5,14 +5,14 @@
 
 // Define the pins for MAX6675
 int thermoDO = 19;
-int thermoCS = 23;
+int thermoCS = 5;
 int thermoCLK = 18;
 
 // Define the PID output pin
 const int outputPin = 4; // GPIO 4 for PID output (PWM)
 
 // Define the potentiometer pin
-const int potPin = 34; // GPIO 34 for potentiometer (analog input)
+const int potPin = 32; // GPIO 34 for potentiometer (analog input)
 
 // Initialize the MAX6675 library
 MAX6675 thermocouple(thermoCLK, thermoCS, thermoDO);
@@ -21,7 +21,7 @@ MAX6675 thermocouple(thermoCLK, thermoCS, thermoDO);
 LiquidCrystal_I2C lcd(0x27, 20, 4); // Set the LCD address to 0x27 for a 20x4 display
 
 // PID Variables
-double setpoint = 100.0; // Desired temperature in Celsius
+double setpoint = 350.0; // Desired temperature in Celsius
 double input = 0;        // Measured temperature from thermocouple
 double output = 0;       // PID output (PWM value)
 
