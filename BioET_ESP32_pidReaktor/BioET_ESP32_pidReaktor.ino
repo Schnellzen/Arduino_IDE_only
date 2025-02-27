@@ -14,6 +14,16 @@ const int outputPin = 4; // GPIO 4 for PID output (PWM)
 // Define the potentiometer pin
 const int potPin = 32; // GPIO 34 for potentiometer (analog input)
 
+// Define the thermistor pin
+const int thermistorPin = 35; // GPIO 35 for thermistor (analog input)
+
+// Thermistor parameters
+const int seriesResistor = 10000; // Series resistor value (10k ohms)
+const float thermistorNominal = 10000; // Resistance at nominal temperature (10k ohms)
+const float temperatureNominal = 25; // Nominal temperature (25°C)
+const float betaCoefficient = 3950; // Beta coefficient of the thermistor
+const float kelvinOffset = 273.15; // Kelvin to Celsius offset
+
 // Initialize the MAX6675 library
 MAX6675 thermocouple(thermoCLK, thermoCS, thermoDO);
 
@@ -55,6 +65,9 @@ void setup() {
 
   // Set the potentiometer pin as input
   pinMode(potPin, INPUT);
+
+  // Set the thermistor pin as input
+  pinMode(thermistorPin, INPUT);
 }
 
 void loop() {
@@ -71,24 +84,48 @@ void loop() {
   // Write the PID output to the output pin (PWM)
   analogWrite(outputPin, output);
 
+  // Read the thermistor temperature
+  float thermistorTemp = readThermistor();
+
   // Display data on the LCD
-  datashow();
+  datashow(thermistorTemp);
 
   // Print the temperature, setpoint, and PID output to the Serial Monitor
-  Serial.print("Temperature: ");
+  Serial.print("Thermocouple Temp: ");
   Serial.print(input);
   Serial.print(" C, Setpoint: ");
   Serial.print(setpoint);
   Serial.print(" C, PID Output: ");
-  Serial.println(output);
+  Serial.print(output);
+  Serial.print(", Thermistor Temp: ");
+  Serial.print(thermistorTemp);
+  Serial.println(" C");
 
   // Wait for a short time before the next reading
   delay(100);
 }
 
+// Function to read the thermistor temperature
+float readThermistor() {
+  // Read the analog value from the thermistor
+  int adcValue = analogRead(thermistorPin);
+
+  // Convert the analog value to resistance
+  float resistance = (4095.0 / adcValue) - 1.0;
+  resistance = seriesResistor / resistance;
+
+  // Calculate temperature using the Steinhart-Hart equation
+  float steinhart = log(resistance / thermistorNominal) / betaCoefficient;
+  steinhart += 1.0 / (temperatureNominal + kelvinOffset);
+  steinhart = 1.0 / steinhart;
+  steinhart -= kelvinOffset; // Convert from Kelvin to Celsius
+
+  return steinhart;
+}
+
 // Function to display data on the LCD
-void datashow() {
-  // Print the temperature, setpoint, and PID output in a single line
+void datashow(float thermistorTemp) {
+  // Print the thermocouple temperature, setpoint, and PID output in a single line
   lcd.setCursor(0, 1); // Second line of the LCD
   lcd.print("T: ");
   lcd.print(input,0);
@@ -97,4 +134,10 @@ void datashow() {
   lcd.print(") [");
   lcd.print(output);
   lcd.print("]   "); // Clear any leftover characters
+
+  // Print the thermistor temperature on the third line
+  lcd.setCursor(0, 2); // Third line of the LCD
+  lcd.print("Thermistor: ");
+  lcd.print(thermistorTemp);
+  lcd.print(" C   ");
 }
