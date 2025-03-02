@@ -12,7 +12,7 @@ int thermoCLK = 18;
 const int outputPin = 4; // GPIO 4 for PID output (PWM)
 
 // Define the potentiometer pin
-const int potPin = 32; // GPIO 34 for potentiometer (analog input)
+const int potPin = 33; // GPIO 33 for potentiometer (analog input)
 
 // Define the thermistor pin
 const int thermistorPin = 35; // GPIO 35 for thermistor (analog input)
@@ -23,7 +23,7 @@ const float thermistorNominal = 10000; // Resistance at nominal temperature (10k
 const float temperatureNominal = 25; // Nominal temperature (25°C)
 const float betaCoefficient = 3950; // Beta coefficient of the thermistor
 const float kelvinOffset = 273.15; // Kelvin to Celsius offset
-
+const float vcc = 3.3;
 // Initialize the MAX6675 library
 MAX6675 thermocouple(thermoCLK, thermoCS, thermoDO);
 
@@ -54,7 +54,7 @@ void setup() {
   Serial.begin(115200);
 
   // Wait for MAX6675 to stabilize
-  delay(500);
+  delay(100);
 
   // Initialize PID
   myPID.SetMode(AUTOMATIC); // Turn on the PID
@@ -102,23 +102,29 @@ void loop() {
   Serial.println(" C");
 
   // Wait for a short time before the next reading
-  delay(100);
+  delay(500);
 }
 
 // Function to read the thermistor temperature
-float readThermistor() {
+
+float readThermistor(){}
   // Read the analog value from the thermistor
   int adcValue = analogRead(thermistorPin);
 
-  // Convert the analog value to resistance
-  float resistance = (4095.0 / adcValue) - 1.0;
-  resistance = seriesResistor / resistance;
+  // avoid divide by 0 if reading error
+  if (adcValue == 0) return -999;  
+
+  // convert ADC value to voltage
+  float voltage = adcValue * (vcc / 4095.0);
+
+  // calculate thermistor resistance using voltage divider equation
+  float resistance = seriesResistor * ((vcc / voltage) - 1.0);
 
   // Calculate temperature using the Steinhart-Hart equation
   float steinhart = log(resistance / thermistorNominal) / betaCoefficient;
   steinhart += 1.0 / (temperatureNominal + kelvinOffset);
   steinhart = 1.0 / steinhart;
-  steinhart -= kelvinOffset; // Convert from Kelvin to Celsius
+  steinhart -= kelvinOffset; // convert from Kelvin to celcius
 
   return steinhart;
 }
@@ -127,12 +133,12 @@ float readThermistor() {
 void datashow(float thermistorTemp) {
   // Print the thermocouple temperature, setpoint, and PID output in a single line
   lcd.setCursor(0, 1); // Second line of the LCD
-  lcd.print("T: ");
+  lcd.print("  T: ");
   lcd.print(input,0);
   lcd.print(" (");
   lcd.print(setpoint,0);
   lcd.print(") [");
-  lcd.print(output);
+  lcd.print(output, 0);
   lcd.print("]   "); // Clear any leftover characters
 
   // Print the thermistor temperature on the third line
