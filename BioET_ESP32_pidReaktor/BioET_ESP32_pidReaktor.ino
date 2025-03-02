@@ -107,7 +107,7 @@ void loop() {
 
 // Function to read the thermistor temperature
 
-float readThermistor(){}
+float readThermistor(){
   // Read the analog value from the thermistor
   int adcValue = analogRead(thermistorPin);
 
