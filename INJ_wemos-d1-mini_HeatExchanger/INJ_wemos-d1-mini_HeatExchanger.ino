@@ -13,26 +13,30 @@ Adafruit_SSD1306 display(OLED_RESET);
 #define MAX6675_MISO 12
 #define MAX6675_CS 15
 
+MAX6675 thermocouple(MAX6675_CLK, MAX6675_CS, MAX6675_MISO);
+
 // Motorized Valve Control
-#define LEAD_PIN D0     // GPIO 0 - Main power control
-#define DIR_PIN D2      // GPIO 2 - Direction control
-#define VALVE_TRAVEL_TIME 17000  // 30 seconds full travel
+#define LEAD_PIN 0     // GPIO 0 - Main power control
+#define DIR_PIN 2      // GPIO 2 - Direction control
+#define VALVE_TRAVEL_TIME 10000  // 10 seconds full travel
+
+#define RelayLowOn //comment out this line if the rellay is high on
 
 // Temperature Settings
 #define TARGET_TEMP 90.0f       // Your 90°C target
 #define TEMP_HYSTERESIS 2.0f    // ±2°C deadband
-#define MIN_VALVE_POSITION 15.0f // 15% = fully closed
+#define MIN_VALVE_POSITION 20.0f // 15% = fully closed
 #define MAX_VALVE_POSITION 100.0f // 100% = fully open
 
 // System Variables
 float currentTemp = 0.0f;
+float prevTemp = 0.0f;
 float deltaTemp = 0.0f;
 float valvePosition = 0.0f;      // 0-100% open
 unsigned long valveActionStart = 0;
+unsigned long valveActionStop = 0;
 bool isValveMoving = false;
 bool valveDirection = false;     // false=opening, true=closing
-
-MAX6675 thermocouple(MAX6675_CLK, MAX6675_CS, MAX6675_MISO);
 
 // Custom max/min functions for float comparisons
 float float_max(float a, float b) { return (a > b) ? a : b; }
@@ -48,67 +52,82 @@ void setup() {
   // Initialize Valve Control Pins
   pinMode(LEAD_PIN, OUTPUT);
   pinMode(DIR_PIN, OUTPUT);
-  digitalWrite(LEAD_PIN, LOW);
-  digitalWrite(DIR_PIN, LOW);
 
-  // Initialize valve to known closed position
-  valvePosition = 0.0f;
-  
   // Display startup
   displayStartup();
+
+  // Initialize valve to known closed position
+  openValve(); 
+  delay(VALVE_TRAVEL_TIME*1.5);
+  stopValve();
+  valvePosition = MAX_VALVE_POSITION;
+  closeValve();
+  delay(VALVE_TRAVEL_TIME/2);
+  stopValve();  
+  valvePosition = MAX_VALVE_POSITION/2;
+
   delay(2000);
 
+  Serial.println("setup done");
 }
 
 void loop() {
+  Serial.println("-----");
+  prevTemp = currentTemp;
   currentTemp = readTemperature();
   
-  if (!isValveMoving) {
-    controlValveBasedOnTemp(currentTemp);
-  } else {
-    updateValvePosition();
-    checkValveLimits();
-  }
+  controlValveBasedOnTemp(currentTemp,prevTemp);
+  updateValvePosition();
+  checkValveLimits();
+  
   
   updateDisplay(currentTemp, valvePosition);
-  delay(100); // Main loop delay
+  delay(1000); // Main loop delay
 }
 
 float readTemperature() {
   float temp = thermocouple.readCelsius();
   if(isnan(temp)) {
     displayError();
+    Serial.println("temp fail-0");
     return -1.0f;
   }
   return temp;
 }
 
-void controlValveBasedOnTemp(float currentTemp) {
-  if(currentTemp == -1.0f) return; // Skip if temperature reading failed
+void controlValveBasedOnTemp(float currentTemp, float prevTemp) {
+  if(currentTemp == -1.0f) {
+  Serial.println("temp fail-1");
+  return; // Skip if temperature reading failed
+  }
+  Serial.println("hehe-1");
+  Serial.println(currentTemp);
+  deltaTemp = (currentTemp - prevTemp)*2;
+  Serial.println(deltaTemp);
 
-  deltaTemp = currentTemp - readTemperature();
-
-  if(TARGET_TEMP - currentTemp > 20*TEMP_HYSTERESIS) {
+  if(TARGET_TEMP - currentTemp > 10*TEMP_HYSTERESIS) {
       if(valvePosition > MIN_VALVE_POSITION) {
         closeValve();
-        delay(1000); //cek nanti 1
+        delay(500); //cek nanti 1
         stopValve();
+        Serial.println("hehe delau");
       }
   }
 
     if(currentTemp + deltaTemp < TARGET_TEMP + TEMP_HYSTERESIS) {
-      // Temperature too low - open valve (increase flow)
-      if(valvePosition < MAX_VALVE_POSITION) {
-        openValve(); 
+      // Temperature too low - close valve (reduce flow)
+      if(valvePosition > MIN_VALVE_POSITION) {
+        closeValve(); 
         delay(500); //cek nanti
         stopValve();  
+        Serial.println("hehe buka");
       }
     }
 
     else if (currentTemp + deltaTemp > TARGET_TEMP - TEMP_HYSTERESIS) {
-      // Temperature too high - close valve (reduce flow)
-      if(valvePosition > MIN_VALVE_POSITION) {
-        closeValve();
+      // Temperature too high - open valve (increase flow)
+      if(valvePosition < MAX_VALVE_POSITION) {
+        openValve();
         delay(500); //cek nanti
         stopValve();
       }
@@ -119,8 +138,14 @@ void controlValveBasedOnTemp(float currentTemp) {
 void openValve() {
   if(valvePosition >= MAX_VALVE_POSITION) return;
   
-  digitalWrite(DIR_PIN, LOW);    // Set direction to OPEN
-  digitalWrite(LEAD_PIN, HIGH);  // Activate movement
+  #ifdef RelayLowOn
+    digitalWrite(DIR_PIN, HIGH);    // Set direction to OPEN
+    digitalWrite(LEAD_PIN, LOW);  // Activate movement
+  #else
+    digitalWrite(DIR_PIN, LOW);    // Set direction to OPEN
+    digitalWrite(LEAD_PIN, HIGH);  // Activate movement
+  #endif
+
   valveActionStart = millis();
   isValveMoving = true;
   valveDirection = false;
@@ -131,38 +156,57 @@ void openValve() {
 void closeValve() {
   if(valvePosition <= MIN_VALVE_POSITION) return;
   
-  digitalWrite(DIR_PIN, HIGH);   // Set direction to CLOSE
-  digitalWrite(LEAD_PIN, HIGH);  // Activate movement
+  #ifdef RelayLowOn
+    digitalWrite(DIR_PIN, LOW);    // Set direction to CLOSE
+    digitalWrite(LEAD_PIN, LOW);  // Activate movement
+  #else
+    digitalWrite(DIR_PIN, HIGH);    // Set direction to CLOSE
+    digitalWrite(LEAD_PIN, HIGH);  // Activate movement
+  #endif
+
   valveActionStart = millis();
+  Serial.println(valveActionStart);
   isValveMoving = true;
   valveDirection = true;
   Serial.println("Closing valve...");
 }
 
 void stopValve() {
-  digitalWrite(LEAD_PIN, LOW);  // Stop movement
-  digitalWrite(DIR_PIN, LOW);
+  if(isValveMoving==false) return;
+  #ifdef RelayLowOn
+    digitalWrite(DIR_PIN, HIGH);    // Stop movement 
+    digitalWrite(LEAD_PIN, HIGH);  
+  #else
+    digitalWrite(DIR_PIN, LOW); // Stop movement   
+    digitalWrite(LEAD_PIN, LOW);  
+  #endif
+  
   isValveMoving = false;
-  Serial.print("Valve stopped. Position: ");
-  Serial.print(valvePosition);
+  valveActionStop= millis();
+  Serial.print("Valve stopped");
   Serial.println("%");
 }
 
 void updateValvePosition() {
-  unsigned long elapsed = millis() - valveActionStart;
+  unsigned long elapsed = valveActionStop - valveActionStart;
   float positionChange = (elapsed / (VALVE_TRAVEL_TIME / 100.0f));
-  
+  Serial.println("masuk sini");
   if(valveDirection) { // Closing
-    valvePosition = float_max(MIN_VALVE_POSITION, 100.0f - positionChange);
+    valvePosition = valvePosition - positionChange;
   } else { // Opening
-    valvePosition = float_min(MAX_VALVE_POSITION, positionChange);
+    valvePosition = valvePosition + positionChange;
   }
-  
+
+  valveActionStart = valveActionStop;
+
+  Serial.print("Position: ");
+  Serial.println(valvePosition);
   // Auto-stop when reaching limits
   if((valveDirection && valvePosition <= MIN_VALVE_POSITION) || 
      (!valveDirection && valvePosition >= MAX_VALVE_POSITION)) {
     stopValve();
   }
+
 }
 
 void checkValveLimits() {
