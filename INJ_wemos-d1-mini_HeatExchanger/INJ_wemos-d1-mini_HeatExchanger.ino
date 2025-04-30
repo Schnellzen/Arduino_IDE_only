@@ -23,7 +23,6 @@ MAX6675 thermocouple(MAX6675_CLK, MAX6675_CS, MAX6675_MISO);
 //#define RelayLowOn  //comment out this line if the rellay is high on
 
 // Temperature Settings
-#define MAX_VALVE_POSITION 100.0f // 100% = fully open
 #define TARGET_TEMP 90.0f          // Your 90°C target
 #define TEMP_HYSTERESIS 2.0f       // ±2°C deadband
 #define MIN_VALVE_POSITION 20.0f   // 15% = fully closed
