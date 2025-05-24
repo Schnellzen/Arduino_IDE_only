@@ -38,7 +38,7 @@ unsigned long valveActionStop = 0;
 bool isValveMoving = false;
 bool valveDirection = false;  // false=opening, true=closing
 
-int custompos = 20 ; //valve pos in percentage
+int custompos = 100 ; //valve pos in percentage
 
 // Custom max/min functions for float comparisons
 float float_max(float a, float b) {return (a > b) ? a : b;}
