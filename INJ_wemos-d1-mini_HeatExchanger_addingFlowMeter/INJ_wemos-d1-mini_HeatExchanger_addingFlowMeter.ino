@@ -44,7 +44,7 @@ unsigned long valveActionStop = 0;
 bool isValveMoving = false;
 bool valveDirection = false;  // false=opening, true=closing
 uint64_t pulseCountTally = 0; //counting all pulse
-int volPerPulse = 3.2; // ml/pulse
+float volPerPulse = 0.2144957248; // ml/pulse
 int volPassed = 0; // total ammount of water have been passed in ml
 float flowRate = 0;
 
@@ -122,6 +122,8 @@ void loop() {
 }
 
 void printDataStream(){
+  Serial.print(currentMillis);
+  Serial.print(",");
   Serial.print(currentTemp);
   Serial.print(",");
   Serial.print(valvePosition);
