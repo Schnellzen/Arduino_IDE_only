@@ -16,6 +16,11 @@ int thermoCLK = 18;
 // Initialize the MAX6675 library
 MAX6675 thermocouple(thermoCLK, thermoCS, thermoDO);
 
+//set PWM for PID control
+const int PWM_CHANNEL = 0;    // ESP32 has 16 channels which can generate 16 independent waveforms
+const int PWM_FREQ = 1;     // Official ESP32 example uses 5,000Hz, use 1 Hz since SSR is kinda slow
+const int PWM_RESOLUTION = 8; // use standard 8 bits (8 bits, 0-255)
+
 // Define pin for PID Reactor output
 const int outputPin = 4; // GPIO 4 for Reactor PID output (PWM)
 
@@ -40,9 +45,9 @@ const float betaCoefficient = 3950; // Beta coefficient of the thermistor
 const float kelvinOffset = 273.15; // Kelvin to Celsius offset
 const float vcc = 3.3;
 float thermistorTempBoiler;
-int setpointBoiler = 55;
-int outputhigh = 255;
-int outputkeep = 50;
+int setpointBoiler = 50;
+int outputhigh = 120;
+int outputkeep = 5; // the calc result actually 21.675 for the same effect of 70VAC set in dimmer, it say that this give 0.18g/min evaporation rate, need to recheck
 float thermistorTempHE;
 
 // PID Variables (Reactor)
@@ -50,9 +55,9 @@ double setpoint = 350.0; // Desired temperature in Celsius
 double thermocoupleTemp = 0;     // Measured temperature from thermocouple
 double output = 0;       // PID output (PWM value)
 // PID Tuning Parameters
-double Kp = 2.0; // Proportional gain
-double Ki = 0.5; // Integral gain
-double Kd = 1.0; // Derivative gain
+double Kp = 1.6;  // Reduced from 2.0
+double Ki = 0.3;  // Reduced from 0.5
+double Kd = 2.0;  // Increased from 1.0
 // Initialize PID
 PID myPID(&thermocoupleTemp, &output, &setpoint, Kp, Ki, Kd, DIRECT);
 
@@ -72,10 +77,12 @@ void setup() {
   delay(100);
   myPID.SetMode(AUTOMATIC); // Turn on the PID
   myPID.SetOutputLimits(0, 255); // Set PWM output limits (0-255)
-  pinMode(outputPin, OUTPUT);   // Set the output pin as PWM
+  ledcAttach(outputPin, PWM_FREQ, PWM_RESOLUTION); // Set the output pin as PWM using custom freq, and res
   pinMode(potPinReactor, INPUT);   // Set the potentiometer pin as input
 
   //////  BOILER 
+  ledcAttach(pwmPinBoiler, PWM_FREQ, PWM_RESOLUTION);
+  //pinMode(pwmPinBoiler, OUTPUT); // Set PWM output limits (0-255)
   pinMode(potPinBoiler, INPUT); // Set the potentiometer pin as input
   pinMode(thermistorPinBoiler, INPUT); // Set the thermistor pin as input
 
@@ -91,7 +98,7 @@ void loop() {
   thermocoupleTemp = thermocouple.readCelsius();
   // Read the potentiometer value and map it to the setpoint range (100°C to 350°C)
   int potValueReactor = analogRead(potPinReactor);
-  setpoint = map(potValueReactor, 4095, 0, 100, 350); // ESP32 ADC resolution is 12-bit (0-4095)
+  setpoint = map(potValueReactor, 4095, 0, 250, 500); // ESP32 ADC resolution is 12-bit (0-4095)
   // Compute PID output
   myPID.Compute();
   // Write the PID output to the output pin (PWM)
@@ -103,7 +110,7 @@ void loop() {
   thermistorTempBoiler = readThermistor(thermistorPinBoiler);
   // Read the potentiometer value and map it to the setpoint range (40°C to 90°C)
   int potValueBoiler = analogRead(potPinBoiler);
-  setpointBoiler = map(potValueBoiler, 0, 4095, 40, 90); // ESP32 ADC resolution is 12-bit (0-4095)
+  setpointBoiler = map(potValueBoiler, 0, 4095, 30, 90); // ESP32 ADC resolution is 12-bit (0-4095)
   //Write the output to output pin Boiler
   outputBoiler();
  
@@ -152,10 +159,10 @@ float readThermistor(const int thermistorPin){
 
 //Function to write analog to PWM pin Boiler
 void outputBoiler(){
-   if(setpointBoiler >= thermistorTempBoiler){
-    analogWrite(pwmPinBoiler,outputkeep);
-  } else {
+   if(thermistorTempBoiler < setpointBoiler){
     analogWrite(pwmPinBoiler,outputhigh);
+  } else {
+    analogWrite(pwmPinBoiler,outputkeep);
   }
 }
 
