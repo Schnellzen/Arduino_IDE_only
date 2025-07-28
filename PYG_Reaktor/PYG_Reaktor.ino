@@ -11,7 +11,7 @@ LiquidCrystal_I2C lcd(0x27, 20, 4); // Set the LCD address to 0x27 for a 20x4 di
 #define thermoCS 15
 #define thermoCLK 14
 
-// Define the pins 
+// Define the pins
 #define DT_HX711 0
 #define SCK_HX711 2
 HX711 LoadCell;
@@ -19,15 +19,15 @@ HX711 LoadCell;
 // Initialize the MAX6675 library
 MAX6675 thermocouple(thermoCLK, thermoCS, thermoDO);
 float thermocoupleTemp;
-float force;
+long force;
 void setup() {
   // Initialize the LCD
-  lcd.init();
+  lcd.begin(); // !!!Kadang "init" bergantung lib
   lcd.backlight();
   lcd.setCursor(0, 0);
   LoadCell.begin(DT_HX711, SCK_HX711);
-  LoadCell.set_scale(-9.76);
-  LoadCell.tare();
+  LoadCell.set_scale(1);
+//  LoadCell.tare();
   Serial.begin(115200); // Initialize the serial communication
 
 }
@@ -35,18 +35,20 @@ void setup() {
 void loop() {
   // Read the temperature from the thermocouple
   thermocoupleTemp = thermocouple.readCelsius();
-  force = LoadCell.get_units() / 1000;
+  force = LoadCell.get_units();
+  Serial.println(force);
+  force = map(force,303400,612,0,682);
   ////////////////// LCD
   datashow();
 
   ///////////////// Serial Monitor
-  Serial.print("Thermocouple Temp: ");
-  Serial.print(thermocoupleTemp);
-  Serial.println(" C");
+  // Serial.print("Thermocouple Temp: ");
+  // Serial.print(thermocoupleTemp);
+  // Serial.println(" C");
 
-  Serial.print("Berat: ");
-  Serial.print(force);
-  Serial.println(" kg");
+  // Serial.print("Berat: ");
+  // Serial.print(force);
+  // Serial.println(" g");
 
   delay(500);
   lcd.clear();
@@ -62,11 +64,11 @@ void datashow() {
   lcd.print("   Suhu:");
   lcd.print(thermocoupleTemp);
   lcd.print(" C");
-  
+ 
   //Display Timbangan
   lcd.setCursor(0,2);
   lcd.print("   Berat:");
-  lcd.print(force);
-  lcd.print (" kg");
+  lcd.print(force,0);
+  lcd.print (" g");
 
   }
