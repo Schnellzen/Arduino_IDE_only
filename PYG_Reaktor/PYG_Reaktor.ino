@@ -19,29 +19,38 @@ HX711 LoadCell;
 // Initialize the MAX6675 library
 MAX6675 thermocouple(thermoCLK, thermoCS, thermoDO);
 float thermocoupleTemp;
-long force;
+long force = 0;
 void setup() {
   // Initialize the LCD
   lcd.begin(); // !!!Kadang "init" bergantung lib
   lcd.backlight();
   lcd.setCursor(0, 0);
   LoadCell.begin(DT_HX711, SCK_HX711);
-  LoadCell.set_scale(1);
-//  LoadCell.tare();
+  LoadCell.set_scale(409.2465375f); //397.5f itu val sebelumnya buat load cell 5kg
+  LoadCell.tare();
   Serial.begin(115200); // Initialize the serial communication
-
+  Serial.print("haha");
 }
 
 void loop() {
   // Read the temperature from the thermocouple
   thermocoupleTemp = thermocouple.readCelsius();
-  force = LoadCell.get_units();
-  Serial.println(force);
-  force = map(force,303400,612,0,682);
-  ////////////////// LCD
+  LoadCell.power_down();			        // put the ADC in sleep mode
+  delay(5000);
+  LoadCell.power_up();
+  force = LoadCell.get_units(1);
+  // force = map(force,670261,676119,0,276);
+  //force = force/30;
+
+  //// Data logger 
+  Serial.print(force);
+  Serial.print("\t");
+  Serial.println(thermocoupleTemp,0);
+
+  //// LCD
   datashow();
 
-  ///////////////// Serial Monitor
+  //// Serial Monitor Debugging
   // Serial.print("Thermocouple Temp: ");
   // Serial.print(thermocoupleTemp);
   // Serial.println(" C");
@@ -50,12 +59,13 @@ void loop() {
   // Serial.print(force);
   // Serial.println(" g");
 
-  delay(500);
-  lcd.clear();
+  //delay(4000);
+
 }
 
 // Function to display data on the LCD
 void datashow() {
+  lcd.clear();
   // Print the temperature and weight
   lcd.print("Reaktor Bang Gusti");
 
