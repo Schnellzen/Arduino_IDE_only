@@ -2,8 +2,8 @@
 #include <ESPmDNS.h>
 #include <WebServer.h>
 #include <Wire.h>
-#include <RTClib.h>
-#include <Servo.h>
+#include "RTClib.h"
+#include <ESP32Servo.h>
 
 // ============= CONFIG WIFI =================
 const char* ssid     = "PONDOK AGNIA 2";
@@ -42,13 +42,19 @@ float gearRatio = 2.0;
 
 void setup() {
   Serial.begin(115200);
+  Wire.begin();
 
   // RTC init
   if (!rtc.begin()) {
     Serial.println("Couldn't find RTC");
     while (1);
   }
-  if (rtc.lostPower()) rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
+  
+  // Only set time if RTC lost power
+  if (rtc.lostPower()) {
+    Serial.println("RTC lost power, setting time");
+    rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
+  }
 
   // Servo + Motor init
   feederServo.attach(servoPin);
@@ -63,25 +69,35 @@ void setup() {
   // Ultrasonic
   pinMode(trigPin, OUTPUT);
   pinMode(echoPin, INPUT);
+  digitalWrite(trigPin, LOW);
 
   // Wi-Fi
   WiFi.begin(ssid, password);
   Serial.print("Connecting to WiFi");
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500); Serial.print(".");
+  int wifiTimeout = 0;
+  while (WiFi.status() != WL_CONNECTED && wifiTimeout < 20) {
+    delay(500); 
+    Serial.print(".");
+    wifiTimeout++;
   }
-  Serial.println("Connected!");
-  Serial.print("IP address: "); Serial.println(WiFi.localIP());
-
-  // mDNS
-  if (MDNS.begin("fishfeeder")) {
-    Serial.println("mDNS responder started: http://fishfeeder.local/");
+  
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println("Connected!");
+    Serial.print("IP address: "); Serial.println(WiFi.localIP());
+    
+    // mDNS
+    if (MDNS.begin("fishfeeder")) {
+      Serial.println("mDNS responder started: http://fishfeeder.local/");
+    }
+  } else {
+    Serial.println("Failed to connect to WiFi!");
   }
 
   // Web routes
   server.on("/", handleRoot);
   server.on("/feed", handleFeed);
   server.begin();
+  Serial.println("HTTP server started");
 }
 
 void loop() {
@@ -101,6 +117,8 @@ void loop() {
       alreadyFed[i] = true;
     }
   }
+  
+  delay(1000); // Add small delay to prevent watchdog reset
 }
 
 // ================== HANDLERS ==================
@@ -108,7 +126,10 @@ void loop() {
 void handleRoot() {
   DateTime now = rtc.now();
 
-  String html = "<html><head><title>Fish Feeder</title></head><body>";
+  // Build HTML in chunks to save memory
+  String html = "<html><head><title>Fish Feeder</title>";
+  html += "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">";
+  html += "</head><body>";
   html += "<h1>🐟 ESP32 Fish Feeder</h1>";
   html += "<p><b>Current Time:</b> " + String(now.timestamp()) + "</p>";
 
@@ -134,7 +155,7 @@ void handleRoot() {
   html += "<p><b>Ultrasonic Distance:</b> " + String(dist) + " cm</p>";
 
   // Manual feed button
-  html += "<p><a href=\"/feed\"><button>Feed Now</button></a></p>";
+  html += "<p><a href=\"/feed\"><button style=\"padding:10px;font-size:16px;\">Feed Now</button></a></p>";
 
   html += "</body></html>";
 
@@ -158,12 +179,14 @@ void feedFish(float grams) {
 
   digitalWrite(motorPin, HIGH);
 
-  for (int t = 0; t < servoTurns; t++) {
-    for (int i = 0; i < 180; i += 10) {
-      feederServo.write(i); delay(30);
+  for (int t = 0; t < (int)servoTurns; t++) {
+    for (int i = 0; i <= 180; i += 10) {
+      feederServo.write(i); 
+      delay(30);
     }
     for (int i = 180; i >= 0; i -= 10) {
-      feederServo.write(i); delay(30);
+      feederServo.write(i); 
+      delay(30);
     }
   }
 
@@ -179,5 +202,8 @@ long readUltrasonic() {
   digitalWrite(trigPin, LOW);
 
   long duration = pulseIn(echoPin, HIGH, 30000);
+  if (duration == 0) {
+    return -1; // Error value
+  }
   return duration * 0.034 / 2;
 }
