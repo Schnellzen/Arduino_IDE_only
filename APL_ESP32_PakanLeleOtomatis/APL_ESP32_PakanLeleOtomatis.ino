@@ -6,7 +6,7 @@
 #include <ESP32Servo.h>
 
 // ============= CONFIG WIFI =================
-const char* ssid     = "PONDOK AGNIA 2";
+const char* ssid     = "xxx";
 const char* password = "01191998";
 
 // Web server at port 80
@@ -44,7 +44,7 @@ void setup() {
   Serial.begin(115200);
   Wire.begin();
 
-  // RTC init
+  RTC init
   if (!rtc.begin()) {
     Serial.println("Couldn't find RTC");
     while (1);
