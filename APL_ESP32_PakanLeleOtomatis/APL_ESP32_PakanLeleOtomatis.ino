@@ -6,8 +6,8 @@
 #include <Servo.h>
 
 // ============= CONFIG WIFI =================
-const char* ssid     = "YOUR_WIFI_NAME";
-const char* password = "YOUR_WIFI_PASS";
+const char* ssid     = "PONDOK AGNIA 2";
+const char* password = "01191998";
 
 // Web server at port 80
 WebServer server(80);
