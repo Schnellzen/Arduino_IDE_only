@@ -4,10 +4,11 @@
 #include <Wire.h>
 #include "RTClib.h"
 #include <ESP32Servo.h>
+#include <vector>
 
 // ============= CONFIG WIFI =================
-const char* ssid     = "xx";
-const char* password = "xx";
+const char* ssid     = "DESKTOP-LU47COE 9850";
+const char* password = "qweasdzxc123qwe";
 
 // Web server at port 80
 WebServer server(80);
@@ -35,18 +36,32 @@ const int levelC = 25;
 const int trigPin = 14;
 const int echoPin = 12;
 
-// Feeding settings (with defaults)
+// Feeding settings
 float gramsPerTurn = 20.0;
-float feedAmountGrams = 60.0;
+float feedAmountGrams = 60.0;  // Default: 3 rotations (60g)
 float gearRatio = 2.0;
-int feedHours[3] = {8, 16, 0};
-bool alreadyFed[3] = {false, false, false};
+
+// Dynamic feeding schedule
+struct FeedingTime {
+  int hour;
+  int minute;
+  bool enabled;
+  bool alreadyFed;
+};
+
+std::vector<FeedingTime> feedingSchedule;
+int nextFeedingId = 0;
 
 // Function declarations
 DateTime getCurrentTime();
 void updateSoftwareClock();
 void saveSettings();
 void loadSettings();
+void addFeedingTime(int hour, int minute, bool enabled = true);
+void removeFeedingTime(int index);
+String getFeedingStatus();
+float calculateValidFeedAmount(float desiredAmount);
+int calculateRotations(float grams);
 
 void setup() {
   Serial.begin(115200);
@@ -55,16 +70,25 @@ void setup() {
   // Load saved settings
   loadSettings();
 
+  // Ensure feed amount is valid multiple
+  feedAmountGrams = calculateValidFeedAmount(feedAmountGrams);
+
+  // Add some default feeding times if schedule is empty
+  if (feedingSchedule.empty()) {
+    addFeedingTime(8, 0);
+    addFeedingTime(16, 0);
+    addFeedingTime(20, 0);
+  }
+
   // RTC init with error handling
   Serial.println("Initializing RTC...");
   if (!rtc.begin()) {
-    Serial.println("⚠️ WARNING: Couldn't find RTC!");
-    Serial.println("⚠️ Switching to software clock mode");
-    Serial.println("⚠️ Time will be set to compile time");
+    Serial.println("WARNING: Couldn't find RTC!");
+    Serial.println("Switching to software clock mode");
+    Serial.println("Time will be set to compile time");
     rtcConnected = false;
     useSoftwareClock = true;
     
-    // Initialize software clock with compile time
     softwareTime = DateTime(F(__DATE__), F(__TIME__));
     softwareClockMillis = millis();
     Serial.print("Software time set to: ");
@@ -73,7 +97,6 @@ void setup() {
     rtcConnected = true;
     Serial.println("RTC found successfully!");
     
-    // Only set time if RTC lost power
     if (rtc.lostPower()) {
       Serial.println("RTC lost power, setting time to compile time");
       rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
@@ -106,7 +129,7 @@ void setup() {
   WiFi.begin(ssid, password);
   Serial.print("Connecting to WiFi");
   int wifiTimeout = 0;
-  while (WiFi.status() != WL_CONNECTED && wifiTimeout < 20) {
+  while (WiFi.status() != WL_CONNECTED && wifiTimeout < 200) {
     delay(500); 
     Serial.print(".");
     wifiTimeout++;
@@ -116,7 +139,6 @@ void setup() {
     Serial.println("Connected!");
     Serial.print("IP address: "); Serial.println(WiFi.localIP());
     
-    // mDNS
     if (MDNS.begin("fishfeeder")) {
       Serial.println("mDNS responder started: http://fishfeeder.local/");
     }
@@ -124,12 +146,16 @@ void setup() {
     Serial.println("Failed to connect to WiFi!");
   }
 
-  // Web routes
+  // Web routes - FIXED: Added the missing /update route handler
   server.on("/", handleRoot);
   server.on("/feed", handleFeed);
   server.on("/time", handleTime);
   server.on("/settings", handleSettings);
-  server.on("/update", handleUpdate);
+  server.on("/schedule", handleSchedule);
+  server.on("/add-time", handleAddTime);
+  server.on("/update", handleUpdateTime); // FIXED: Added this missing route
+  server.on("/delete-time", handleDeleteTime);
+  server.on("/toggle-time", handleToggleTime);
   server.begin();
   Serial.println("HTTP server started");
 }
@@ -137,7 +163,6 @@ void setup() {
 void loop() {
   server.handleClient();
 
-  // Update software clock if RTC is not available
   if (useSoftwareClock) {
     updateSoftwareClock();
   }
@@ -146,18 +171,22 @@ void loop() {
 
   // Reset feeding flags daily
   if (now.hour() == 0 && now.minute() == 1) {
-    for (int i = 0; i < 3; i++) alreadyFed[i] = false;
+    for (auto& feeding : feedingSchedule) {
+      feeding.alreadyFed = false;
+    }
     Serial.println("Reset daily feeding flags");
   }
 
   // Auto feeding
-  for (int i = 0; i < 3; i++) {
-    if (now.hour() == feedHours[i] && now.minute() == 0 && !alreadyFed[i]) {
+  for (auto& feeding : feedingSchedule) {
+    if (feeding.enabled && !feeding.alreadyFed && 
+        now.hour() == feeding.hour && now.minute() == feeding.minute) {
       Serial.print("Auto feeding scheduled for ");
-      Serial.print(feedHours[i]);
-      Serial.println(":00");
+      Serial.print(feeding.hour);
+      Serial.print(":");
+      Serial.println(feeding.minute < 10 ? "0" + String(feeding.minute) : String(feeding.minute));
       feedFish(feedAmountGrams);
-      alreadyFed[i] = true;
+      feeding.alreadyFed = true;
     }
   }
   
@@ -186,26 +215,84 @@ void updateSoftwareClock() {
   }
 }
 
+// ================== FEEDING CALCULATION FUNCTIONS ==================
+
+float calculateValidFeedAmount(float desiredAmount) {
+  // Calculate the nearest multiple of gramsPerTurn
+  int rotations = round(desiredAmount / gramsPerTurn);
+  if (rotations < 1) rotations = 1;  // Minimum 1 rotation
+  float validAmount = rotations * gramsPerTurn;
+  
+  Serial.print("Adjusted feed amount from ");
+  Serial.print(desiredAmount);
+  Serial.print("g to ");
+  Serial.print(validAmount);
+  Serial.print("g (");
+  Serial.print(rotations);
+  Serial.println(" rotations)");
+  
+  return validAmount;
+}
+
+int calculateRotations(float grams) {
+  return round(grams / gramsPerTurn);
+}
+
+// ================== SCHEDULE MANAGEMENT ==================
+
+void addFeedingTime(int hour, int minute, bool enabled) {
+  FeedingTime newFeeding;
+  newFeeding.hour = hour;
+  newFeeding.minute = minute;
+  newFeeding.enabled = enabled;
+  newFeeding.alreadyFed = false;
+  feedingSchedule.push_back(newFeeding);
+  Serial.print("Added feeding time: ");
+  Serial.print(hour);
+  Serial.print(":");
+  Serial.println(minute < 10 ? "0" + String(minute) : String(minute));
+}
+
+void removeFeedingTime(int index) {
+  if (index >= 0 && index < feedingSchedule.size()) {
+    Serial.print("Removed feeding time: ");
+    Serial.print(feedingSchedule[index].hour);
+    Serial.print(":");
+    Serial.println(feedingSchedule[index].minute);
+    feedingSchedule.erase(feedingSchedule.begin() + index);
+  }
+}
+
+String getFeedingStatus() {
+  String status;
+  for (const auto& feeding : feedingSchedule) {
+    status += String(feeding.hour) + ":" + 
+             (feeding.minute < 10 ? "0" + String(feeding.minute) : String(feeding.minute)) +
+             (feeding.enabled ? " [ON] " : " [OFF] ") +
+             (feeding.alreadyFed ? "(fed)" : "(pending)") + "\\n";
+  }
+  return status;
+}
+
 // ================== SETTINGS STORAGE ==================
 
 void saveSettings() {
-  // In a real implementation, you'd save to EEPROM or SPIFFS
-  // For now, we'll just print the settings
   Serial.println("=== SAVED SETTINGS ===");
   Serial.print("Feed Amount: "); Serial.println(feedAmountGrams);
   Serial.print("Grams per Turn: "); Serial.println(gramsPerTurn);
   Serial.print("Gear Ratio: "); Serial.println(gearRatio);
-  Serial.print("Feed Times: ");
-  for (int i = 0; i < 3; i++) {
-    Serial.print(feedHours[i]); Serial.print(" ");
+  Serial.print("Rotations per feed: "); Serial.println(calculateRotations(feedAmountGrams));
+  Serial.println("Feeding Schedule:");
+  for (const auto& feeding : feedingSchedule) {
+    Serial.printf("  %02d:%02d %s %s\\n", 
+                 feeding.hour, feeding.minute,
+                 feeding.enabled ? "Enabled" : "Disabled",
+                 feeding.alreadyFed ? "(fed)" : "");
   }
-  Serial.println();
   Serial.println("======================");
 }
 
 void loadSettings() {
-  // In a real implementation, you'd load from EEPROM or SPIFFS
-  // For now, we'll use default values
   Serial.println("Loaded default settings");
 }
 
@@ -213,159 +300,241 @@ void loadSettings() {
 
 void handleRoot() {
   DateTime now = getCurrentTime();
+  int rotations = calculateRotations(feedAmountGrams);
 
-  String html = "<html><head><title>Fish Feeder</title>";
+  String html = "<!DOCTYPE html><html><head><title>Fish Feeder</title>";
+  html += "<meta charset='UTF-8'>";
   html += "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">";
   html += "<style>body{font-family:Arial,sans-serif;margin:40px;background:#f0f0f0;}";
   html += ".card{background:white;padding:20px;border-radius:10px;box-shadow:0 2px 5px rgba(0,0,0,0.1);margin:10px 0;}";
   html += ".warning{background:#fff3cd;border-left:4px solid #ffc107;color:#856404;}";
   html += ".success{background:#d4edda;border-left:4px solid #28a745;}";
+  html += ".info{background:#d1ecf1;border-left:4px solid #17a2b8;color:#0c5460;}";
   html += ".btn{padding:10px 15px;font-size:16px;border:none;border-radius:5px;cursor:pointer;margin:5px;}";
   html += ".btn-primary{background:#007bff;color:white;}";
   html += ".btn-success{background:#28a745;color:white;}";
   html += ".btn-warning{background:#ffc107;color:black;}";
-  html += "form{margin:10px 0;}label{display:block;margin:5px 0;}input{margin:5px 0;padding:8px;width:100px;}</style></head><body>";
-  html += "<h1>Abid's ESP32 Fish Feeder</h1>";
+  html += ".btn-danger{background:#dc3545;color:white;}";
+  html += ".schedule-item{margin:5px 0;padding:10px;background:#f8f9fa;border-radius:5px;}";
+  html += "</style></head><body>";
+  html += "<h1>🐟 ESP32 Fish Feeder</h1>";
   
-  // RTC status indicator
   if (!rtcConnected) {
-    html += "<div class='card warning'>";
-    html += "<h3>!!! RTC NOT CONNECTED</h3>";
-    html += "<p>Using software clock. Time may drift over time.</p>";
-    html += "<p>Connect RTC for accurate timekeeping.</p>";
-    html += "</div>";
+    html += "<div class='card warning'><h3>⚠️ RTC NOT CONNECTED</h3><p>Using software clock</p></div>";
   } else {
-    html += "<div class='card success'>";
-    html += "<p>✓✓✓ RTC connected and working</p>";
-    html += "</div>";
+    html += "<div class='card success'><p>✅ RTC connected</p></div>";
   }
   
   html += "<div class='card'>";
   html += "<p><b>Current Time:</b> " + String(now.timestamp()) + "</p>";
-  html += "<p><b>RTC Status:</b> " + String(rtcConnected ? "Connected" : "Disconnected") + "</p>";
-  html += "<p><b>Clock Mode:</b> " + String(useSoftwareClock ? "Software" : "Hardware") + "</p>";
-
-  // Feeding info
+  
+  // Feeding info with rotation details
+  html += "<div class='card info'>";
   html += "<p><b>Feeding Amount:</b> " + String(feedAmountGrams) + " g</p>";
-  html += "<p><b>Grams per Turn:</b> " + String(gramsPerTurn) + " g</p>";
-  html += "<p><b>Gear Ratio:</b> " + String(gearRatio) + "</p>";
+  html += "<p><b>Rotations:</b> " + String(rotations) + " full rotations</p>";
+  html += "<p><b>Grams per Rotation:</b> " + String(gramsPerTurn) + " g</p>";
+  html += "</div>";
 
-  // Schedule
-  html += "<p><b>Feeding Times:</b> ";
-  for (int i = 0; i < 3; i++) {
-    html += String(feedHours[i]) + ":00 ";
-    html += alreadyFed[i] ? "(fed) " : "(pending) ";
+  // Schedule display
+  html += "<p><b>Feeding Schedule:</b></p>";
+  html += "<div style='max-height:200px;overflow-y:auto;margin:10px 0;'>";
+  for (size_t i = 0; i < feedingSchedule.size(); i++) {
+    String timeStr = String(feedingSchedule[i].hour) + ":" + 
+                    (feedingSchedule[i].minute < 10 ? "0" + String(feedingSchedule[i].minute) : String(feedingSchedule[i].minute));
+    html += "<div class='schedule-item'>";
+    html += "<b>" + timeStr + "</b> - ";
+    html += feedingSchedule[i].enabled ? "✅ Enabled" : "❌ Disabled";
+    html += " - " + String(feedingSchedule[i].alreadyFed ? "Fed" : "Pending");
+    html += "</div>";
   }
-  html += "</p>";
-
-  // Level sensors
-  html += "<p><b>Level Sensors:</b> A:" + String(digitalRead(levelA)) +
-          " B:" + String(digitalRead(levelB)) +
-          " C:" + String(digitalRead(levelC)) + "</p>";
-
-  // Ultrasound
-  long dist = readUltrasonic();
-  html += "<p><b>Ultrasonic Distance:</b> " + String(dist) + " cm</p>";
+  html += "</div>";
 
   // Control buttons
   html += "<p>";
-  html += "<a href=\"/feed\"><button class=\"btn btn-primary\">Feed Now</button></a>";
+  html += "<a href=\"/feed\"><button class=\"btn btn-primary\">Feed Now (" + String(feedAmountGrams) + "g)</button></a>";
   html += "<a href=\"/time\"><button class=\"btn btn-success\">Sync Time</button></a>";
-  html += "<a href=\"/settings\"><button class=\"btn btn-warning\">Edit Settings</button></a>";
+  html += "<a href=\"/settings\"><button class=\"btn btn-warning\">Settings</button></a>";
+  html += "<a href=\"/schedule\"><button class=\"btn btn-danger\">Manage Schedule</button></a>";
   html += "</p>";
 
   html += "</div></body></html>";
 
-  server.send(200, "text/html", html);
+  server.send(200, "text/html; charset=utf-8", html);
 }
 
 void handleSettings() {
-  String html = "<html><head><title>Fish Feeder - Settings</title>";
+  int currentRotations = calculateRotations(feedAmountGrams);
+  int minRotations = 1;
+  int maxRotations = 50;  // Maximum 50 rotations (1000g if 20g per rotation)
+
+  String html = "<!DOCTYPE html><html><head><title>Fish Feeder - Settings</title>";
+  html += "<meta charset='UTF-8'>";
   html += "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">";
   html += "<style>body{font-family:Arial,sans-serif;margin:40px;background:#f0f0f0;}";
   html += ".card{background:white;padding:20px;border-radius:10px;box-shadow:0 2px 5px rgba(0,0,0,0.1);margin:10px 0;}";
+  html += ".info{background:#d1ecf1;border-left:4px solid #17a2b8;color:#0c5460;padding:10px;border-radius:5px;}";
   html += "form{margin:15px 0;}label{display:block;margin:8px 0 3px 0;font-weight:bold;}";
   html += "input,select{padding:8px;margin:5px 0;width:200px;border:1px solid #ccc;border-radius:4px;}";
   html += ".btn{padding:10px 15px;font-size:16px;border:none;border-radius:5px;cursor:pointer;margin:5px;}";
   html += ".btn-primary{background:#007bff;color:white;}";
-  html += ".btn-secondary{background:#6c757d;color:white;}</style></head><body>";
+  html += ".btn-secondary{background:#6c757d;color:white;}";
+  html += "</style></head><body>";
   html += "<h1>⚙️ Fish Feeder Settings</h1>";
   
   html += "<div class='card'>";
+  html += "<div class='info'>";
+  html += "<p><b>Note:</b> Feeding amount must be multiples of " + String(gramsPerTurn) + "g</p>";
+  html += "<p>Current: " + String(feedAmountGrams) + "g = " + String(currentRotations) + " rotations</p>";
+  html += "</div>";
+  
   html += "<form action='/update' method='POST'>";
   
-  // Feeding Amount
-  html += "<label for='amount'>Feeding Amount (grams):</label>";
-  html += "<input type='number' id='amount' name='amount' step='0.1' min='1' max='1000' value='" + String(feedAmountGrams) + "' required><br>";
+  // Feeding Amount in rotations (instead of grams)
+  html += "<label for='rotations'>Number of Rotations:</label>";
+  html += "<input type='number' id='rotations' name='rotations' min='" + String(minRotations) + 
+          "' max='" + String(maxRotations) + "' value='" + String(currentRotations) + "' required><br>";
+  html += "<small>(" + String(minRotations) + " to " + String(maxRotations) + " rotations, " + 
+          String(gramsPerTurn) + "g each)</small><br><br>";
   
-  // Grams per Turn
-  html += "<label for='gramsPerTurn'>Grams per Turn:</label>";
-  html += "<input type='number' id='gramsPerTurn' name='gramsPerTurn' step='0.1' min='0.1' max='100' value='" + String(gramsPerTurn) + "' required><br>";
+  // Grams per Turn (read-only since it's mechanical)
+  html += "<label for='gramsPerTurn'>Grams per Rotation (mechanical):</label>";
+  html += "<input type='number' id='gramsPerTurn' name='gramsPerTurn' step='0.1' min='0.1' max='100' value='" + 
+          String(gramsPerTurn) + "' readonly style='background:#f0f0f0;'><br>";
+  html += "<small>This value depends on your mechanical setup</small><br><br>";
   
-  // Gear Ratio
-  html += "<label for='gearRatio'>Gear Ratio:</label>";
-  html += "<input type='number' id='gearRatio' name='gearRatio' step='0.1' min='0.1' max='10' value='" + String(gearRatio) + "' required><br>";
+  // Gear Ratio (read-only since it's mechanical)
+  html += "<label for='gearRatio'>Gear Ratio (mechanical):</label>";
+  html += "<input type='number' id='gearRatio' name='gearRatio' step='0.1' min='0.1' max='10' value='" + 
+          String(gearRatio) + "' readonly style='background:#f0f0f0;'><br>";
+  html += "<small>This value depends on your gear setup</small><br><br>";
   
-  // Feeding Times
-  html += "<label>Feeding Times (24h format):</label><br>";
-  for (int i = 0; i < 3; i++) {
-    html += "<label for='time" + String(i) + "'>Time " + String(i+1) + ":</label>";
-    html += "<input type='number' id='time" + String(i) + "' name='time" + String(i) + "' min='0' max='23' value='" + String(feedHours[i]) + "' required><br>";
-  }
-  
-  html += "<br>";
   html += "<button type='submit' class='btn btn-primary'>Save Settings</button>";
-  html += "<a href='/' style='text-decoration:none;'><button type='button' class='btn btn-secondary'>Cancel</button></a>";
+  html += "<a href='/'><button type='button' class='btn btn-secondary'>Back</button></a>";
   html += "</form>";
   html += "</div></body></html>";
 
-  server.send(200, "text/html", html);
+  server.send(200, "text/html; charset=utf-8", html);
 }
 
-void handleUpdate() {
+// FIXED: Added the missing handleUpdate function that matches the form action
+void handleUpdateTime() {
   if (server.method() == HTTP_POST) {
-    // Update feeding amount
-    if (server.hasArg("amount")) {
-      feedAmountGrams = server.arg("amount").toFloat();
-      Serial.print("Updated feed amount to: "); Serial.println(feedAmountGrams);
-    }
-    
-    // Update grams per turn
-    if (server.hasArg("gramsPerTurn")) {
-      gramsPerTurn = server.arg("gramsPerTurn").toFloat();
-      Serial.print("Updated grams per turn to: "); Serial.println(gramsPerTurn);
-    }
-    
-    // Update gear ratio
-    if (server.hasArg("gearRatio")) {
-      gearRatio = server.arg("gearRatio").toFloat();
-      Serial.print("Updated gear ratio to: "); Serial.println(gearRatio);
-    }
-    
-    // Update feeding times
-    for (int i = 0; i < 3; i++) {
-      String argName = "time" + String(i);
-      if (server.hasArg(argName)) {
-        int newHour = server.arg(argName).toInt();
-        if (newHour >= 0 && newHour <= 23) {
-          feedHours[i] = newHour;
-          Serial.print("Updated time "); Serial.print(i); 
-          Serial.print(" to: "); Serial.println(newHour);
-        }
+    if (server.hasArg("rotations")) {
+      int rotations = server.arg("rotations").toInt();
+      if (rotations >= 1 && rotations <= 50) {
+        feedAmountGrams = rotations * gramsPerTurn;
+        Serial.print("Updated feed amount to: ");
+        Serial.print(feedAmountGrams);
+        Serial.print("g (");
+        Serial.print(rotations);
+        Serial.println(" rotations)");
       }
     }
     
-    // Reset feeding flags since schedule changed
-    for (int i = 0; i < 3; i++) alreadyFed[i] = false;
+    // These are read-only in the form, but handle them anyway
+    if (server.hasArg("gramsPerTurn")) gramsPerTurn = server.arg("gramsPerTurn").toFloat();
+    if (server.hasArg("gearRatio")) gearRatio = server.arg("gearRatio").toFloat();
     
-    // Save settings (in real implementation, save to EEPROM/SPIFFS)
     saveSettings();
-    
-    server.sendHeader("Location", "/");
-    server.send(303);
-  } else {
-    server.send(400, "text/plain", "Invalid request");
   }
+  server.sendHeader("Location", "/");
+  server.send(303);
+}
+
+void handleAddTime() {
+  if (server.method() == HTTP_POST) {
+    int hour = server.arg("hour").toInt();
+    int minute = server.arg("minute").toInt();
+    bool enabled = server.hasArg("enabled");
+    
+    if (hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59) {
+      addFeedingTime(hour, minute, enabled);
+      saveSettings();
+    }
+  }
+  server.sendHeader("Location", "/schedule");
+  server.send(303);
+}
+
+void handleDeleteTime() {
+  if (server.hasArg("id")) {
+    int id = server.arg("id").toInt();
+    removeFeedingTime(id);
+    saveSettings();
+  }
+  server.sendHeader("Location", "/schedule");
+  server.send(303);
+}
+
+void handleToggleTime() {
+  if (server.hasArg("id")) {
+    int id = server.arg("id").toInt();
+    if (id >= 0 && id < feedingSchedule.size()) {
+      feedingSchedule[id].enabled = !feedingSchedule[id].enabled;
+      Serial.print("Toggled feeding time ");
+      Serial.print(id);
+      Serial.print(" to ");
+      Serial.println(feedingSchedule[id].enabled ? "enabled" : "disabled");
+      saveSettings();
+    }
+  }
+  server.sendHeader("Location", "/schedule");
+  server.send(303);
+}
+
+void handleSchedule() {
+  String html = "<!DOCTYPE html><html><head><title>Fish Feeder - Schedule</title>";
+  html += "<meta charset='UTF-8'>";
+  html += "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">";
+  html += "<style>body{font-family:Arial,sans-serif;margin:40px;background:#f0f0f0;}";
+  html += ".card{background:white;padding:20px;border-radius:10px;box-shadow:0 2px 5px rgba(0,0,0,0.1);margin:10px 0;}";
+  html += ".btn{padding:8px 12px;font-size:14px;border:none;border-radius:4px;cursor:pointer;margin:2px;}";
+  html += ".btn-sm{padding:5px 8px;font-size:12px;}";
+  html += ".btn-success{background:#28a745;color:white;}";
+  html += ".btn-danger{background:#dc3545;color:white;}";
+  html += ".btn-warning{background:#ffc107;color:black;}";
+  html += ".btn-secondary{background:#6c757d;color:white;}";
+  html += "table{width:100%;border-collapse:collapse;}";
+  html += "th,td{padding:8px;text-align:left;border-bottom:1px solid #ddd;}";
+  html += "tr:hover{background:#f5f5f5;}</style></head><body>";
+  html += "<h1>📅 Feeding Schedule</h1>";
+  
+  html += "<div class='card'>";
+  html += "<h3>Current Schedule</h3>";
+  
+  if (feedingSchedule.empty()) {
+    html += "<p>No feeding times scheduled.</p>";
+  } else {
+    html += "<table>";
+    html += "<tr><th>Time</th><th>Status</th><th>Fed Today</th><th>Actions</th></tr>";
+    for (size_t i = 0; i < feedingSchedule.size(); i++) {
+      String timeStr = String(feedingSchedule[i].hour) + ":" + 
+                      (feedingSchedule[i].minute < 10 ? "0" + String(feedingSchedule[i].minute) : String(feedingSchedule[i].minute));
+      html += "<tr>";
+      html += "<td><b>" + timeStr + "</b></td>";
+      html += "<td>" + String(feedingSchedule[i].enabled ? "✅ Enabled" : "❌ Disabled") + "</td>";
+      html += "<td>" + String(feedingSchedule[i].alreadyFed ? "Yes" : "No") + "</td>";
+      html += "<td>";
+      html += "<a href=\"/toggle-time?id=" + String(i) + "\"><button class=\"btn btn-sm " + 
+              String(feedingSchedule[i].enabled ? "btn-warning" : "btn-success") + "\">" +
+              String(feedingSchedule[i].enabled ? "Disable" : "Enable") + "</button></a>";
+      html += "<a href=\"/delete-time?id=" + String(i) + "\"><button class=\"btn btn-sm btn-danger\">Delete</button></a>";
+      html += "</td></tr>";
+    }
+    html += "</table>";
+  }
+  
+  html += "<br><h3>Add New Feeding Time</h3>";
+  html += "<form action='/add-time' method='POST'>";
+  html += "<label>Hour (0-23): <input type='number' name='hour' min='0' max='23' required></label><br>";
+  html += "<label>Minute (0-59): <input type='number' name='minute' min='0' max='59' required></label><br>";
+  html += "<label><input type='checkbox' name='enabled' checked> Enabled</label><br><br>";
+  html += "<button type='submit' class='btn btn-success'>Add Time</button>";
+  html += "<a href='/'><button type='button' class='btn btn-secondary'>Back</button></a>";
+  html += "</form>";
+  html += "</div></body></html>";
+
+  server.send(200, "text/html; charset=utf-8", html);
 }
 
 void handleFeed() {
@@ -377,11 +546,9 @@ void handleFeed() {
 void handleTime() {
   if (rtcConnected) {
     rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
-    Serial.println("RTC time synchronized with compile time");
   } else {
     softwareTime = DateTime(F(__DATE__), F(__TIME__));
     softwareClockMillis = millis();
-    Serial.println("Software clock synchronized with compile time");
   }
   server.sendHeader("Location", "/");
   server.send(303);
@@ -390,25 +557,20 @@ void handleTime() {
 // =============== CORE FUNCTIONS =================
 
 void feedFish(float grams) {
-  Serial.print("Feeding: ");
-  Serial.print(grams); Serial.println(" g");
-
-  float feederTurns = grams / gramsPerTurn;
-  float servoTurns = feederTurns * gearRatio;
+  int rotations = calculateRotations(grams);
+  Serial.print("Feeding: "); 
+  Serial.print(grams); 
+  Serial.print("g ("); 
+  Serial.print(rotations); 
+  Serial.println(" rotations)");
+  
+  float servoTurns = rotations * gearRatio;
 
   digitalWrite(motorPin, HIGH);
-
   for (int t = 0; t < (int)servoTurns; t++) {
-    for (int i = 0; i <= 180; i += 10) {
-      feederServo.write(i); 
-      delay(30);
-    }
-    for (int i = 180; i >= 0; i -= 10) {
-      feederServo.write(i); 
-      delay(30);
-    }
+    for (int i = 0; i <= 180; i += 10) feederServo.write(i), delay(30);
+    for (int i = 180; i >= 0; i -= 10) feederServo.write(i), delay(30);
   }
-
   digitalWrite(motorPin, LOW);
   Serial.println("Feeding complete!");
 }
@@ -419,10 +581,6 @@ long readUltrasonic() {
   digitalWrite(trigPin, HIGH);
   delayMicroseconds(10);
   digitalWrite(trigPin, LOW);
-
   long duration = pulseIn(echoPin, HIGH, 30000);
-  if (duration == 0) {
-    return -1;
-  }
-  return duration * 0.034 / 2;
+  return duration == 0 ? -1 : duration * 0.034 / 2;
 }

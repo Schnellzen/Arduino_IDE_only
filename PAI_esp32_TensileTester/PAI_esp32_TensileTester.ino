@@ -149,8 +149,9 @@ void printMovementStats() {
 
 void moveUntilWeight(float maxDistance, float speed, float targetWeight) {
   isMoving = true;
-  digitalWrite(dirPinLeft, maxDistance > 0 ? HIGH : LOW);
-  digitalWrite(dirPinRight, maxDistance > 0 ? HIGH : LOW);
+  bool movingPositive = (maxDistance > 0);
+  digitalWrite(dirPinLeft, movingPositive ? HIGH : LOW);
+  digitalWrite(dirPinRight, movingPositive ? HIGH : LOW);
   delay(1);
   
   float stepsPerMm = stepsPerRev / mmPerRev;
@@ -162,7 +163,9 @@ void moveUntilWeight(float maxDistance, float speed, float targetWeight) {
   int weightSampleCounter = 0;
   unsigned long stepStartTime = millis();
   unsigned long lastWeightCheckTime = 0;
+  unsigned long lastProgressReportTime = 0;
   bool targetReached = false;
+  int finalStepCount = 0;
 
   // Store movement info
   currentMoveDistance = maxDistance;
@@ -171,85 +174,91 @@ void moveUntilWeight(float maxDistance, float speed, float targetWeight) {
 
   if (checkMode) {
     Serial.print("Weight-controlled movement started | ");
-    Serial.print("Max distance: ");
+    Serial.print("Direction: ");
+    Serial.print(movingPositive ? "POSITIVE" : "NEGATIVE");
+    Serial.print(" | Max distance: ");
     Serial.print(maxDistance, 2);
     Serial.print("mm | Speed: ");
     Serial.print(speed, 3);
     Serial.print("mm/s | Target weight: ");
     Serial.print(targetWeight, 3);
+    Serial.print(" | Stop condition: ");
+    Serial.print(movingPositive ? "Weight < " : "Weight > ");
+    Serial.print(targetWeight, 3);
     Serial.print(" | Max steps: ");
-    Serial.print(maxSteps);
-    Serial.print(" | Step interval: ");
-    Serial.print(stepInterval);
-    Serial.println("ms");
+    Serial.println(maxSteps);
   }
 
+  // PHASE 1: Main movement until target weight is reached
   for (int i = 0; i < maxSteps; i++) {
     unsigned long currentMillis = millis();
     
-    // NON-BLOCKING weight check (only check every 100ms)
-    if (currentMillis - lastWeightCheckTime >= 100) {
+    // NON-BLOCKING weight check - MORE FREQUENTLY
+    if (currentMillis - lastWeightCheckTime >= 50) { // Changed from 100ms to 50ms
       lastWeightCheckTime = currentMillis;
       
-      // Quick weight check (non-blocking)
       if (scale.is_ready()) {
         float currentWeight = scale.get_units(1);
         
-        if (abs(currentWeight) >= abs(targetWeight)) {
+        // ALWAYS report weight in data mode
+        if (!checkMode) {
+          float currentDistance = ((i + 1) * abs(maxDistance)) / maxSteps;
+          Serial.print(totalStepsTaken);
+          Serial.print("\t");
+          Serial.print(totalDistanceMoved + currentDistance, 6);
+          Serial.print("\t");
+          Serial.println(currentWeight, 6);
+        }
+        
+        // DIRECTION-DEPENDENT STOP CONDITION
+        bool shouldStop = false;
+        if (movingPositive) {
+          shouldStop = (currentWeight <= targetWeight);
+        } else {
+          shouldStop = (currentWeight >= targetWeight);
+        }
+        
+        if (shouldStop) {
           targetReached = true;
+          finalStepCount = i;
           if (checkMode) {
-            Serial.print("Target weight reached: ");
+            Serial.print("Phase 1: Target weight reached at step ");
+            Serial.print(i);
+            Serial.print(" | Weight: ");
             Serial.print(currentWeight, 3);
-            Serial.print(" (target: ");
-            Serial.print(targetWeight, 3);
-            Serial.println(")");
+            Serial.print(" | ");
+            Serial.println(movingPositive ? "Weight <= Target" : "Weight >= Target");
           }
           break;
         }
         
-        // Print progress (less frequently)
-        weightSampleCounter++;
-        if (weightSampleCounter >= 5) { // Print every ~500ms
-          weightSampleCounter = 0;
-          if (checkMode) {
-            Serial.print("Progress: ");
-            Serial.print(i + 1);
-            Serial.print("/");
-            Serial.print(maxSteps);
-            Serial.print(" steps | Weight: ");
-            Serial.print(currentWeight, 3);
-            Serial.print(" | Target: ");
-            Serial.println(targetWeight, 3);
-          } else {
-            float currentDistance = ((i + 1) * abs(maxDistance)) / maxSteps;
-            Serial.print(totalStepsTaken);
-            Serial.print("\t");
-            Serial.print(totalDistanceMoved + currentDistance, 6);
-            Serial.print("\t");
-            Serial.println(currentWeight, 6);
-          }
+        // Print progress in check mode (more frequently)
+        if (checkMode && currentMillis - lastProgressReportTime >= 200) { // Report every 200ms
+          lastProgressReportTime = currentMillis;
+          Serial.print("Phase 1: Step ");
+          Serial.print(i);
+          Serial.print("/");
+          Serial.print(maxSteps);
+          Serial.print(" | Weight: ");
+          Serial.print(currentWeight, 3);
+          Serial.print(" | Target: ");
+          Serial.println(targetWeight, 3);
         }
       }
     }
     
-    // Wait for the appropriate time between steps (NON-BLOCKING)
+    // Step timing
     if (currentMillis - stepStartTime >= stepInterval) {
-      // Time to step!
       digitalWrite(stepPinLeft, HIGH);
       digitalWrite(stepPinRight, HIGH);
-      delayMicroseconds(500); // Very short pulse (0.5ms)
+      delayMicroseconds(500);
       digitalWrite(stepPinLeft, LOW);
       digitalWrite(stepPinRight, LOW);
       stepStartTime = currentMillis;
-      
-      // Update tracking
-      totalStepsTaken += 2; // Both motors stepped
-      
-      // Move to next step
+      totalStepsTaken += 2;
       continue;
     }
     
-    // Check for abort commands (non-blocking)
     if (Serial.available()) {
       String command = Serial.readString();
       processCommand(command);
@@ -260,24 +269,178 @@ void moveUntilWeight(float maxDistance, float speed, float targetWeight) {
       }
     }
     
-    // Small delay to prevent CPU hogging
     delay(1);
   }
   
-  // Update total distance
-  float stepsTaken = targetReached ? (totalStepsTaken - (totalStepsTaken % 2)) : (maxSteps * 2);
-  float actualDistance = stepsTaken / stepsPerMm / 2; // Divide by 2 since both motors step
-  totalDistanceMoved += actualDistance;
+  if (!targetReached) {
+    if (checkMode) {
+      Serial.print("Phase 1: Max distance reached | Steps: ");
+      Serial.println(maxSteps);
+    }
+    isMoving = false;
+    return;
+  }
+
+  // PHASE 2: Back off 1.0mm to release pressure
+  if (checkMode) {
+    Serial.println("Phase 2: Backing off 1.0mm to release pressure...");
+  }
+  
+  // Reverse direction for backoff
+  digitalWrite(dirPinLeft, !movingPositive ? HIGH : LOW);
+  digitalWrite(dirPinRight, !movingPositive ? HIGH : LOW);
+  delay(1);
+  
+  int backoffSteps = 5.0 * stepsPerMm;
+  int backoffStepInterval = 20;
+  
+  for (int i = 0; i < backoffSteps; i++) {
+    unsigned long currentMillis = millis();
+    
+    // Report weight during backoff in data mode
+    if (!checkMode && currentMillis - lastWeightCheckTime >= 100) {
+      lastWeightCheckTime = currentMillis;
+      if (scale.is_ready()) {
+        float currentWeight = scale.get_units(1);
+        float backoffDistance = (float)i / stepsPerMm;
+        Serial.print(totalStepsTaken);
+        Serial.print("\t");
+        Serial.print(totalDistanceMoved - backoffDistance, 6); // Negative distance during backoff
+        Serial.print("\t");
+        Serial.println(currentWeight, 6);
+      }
+    }
+    
+    if (currentMillis - stepStartTime >= backoffStepInterval) {
+      digitalWrite(stepPinLeft, HIGH);
+      digitalWrite(stepPinRight, HIGH);
+      delayMicroseconds(500);
+      digitalWrite(stepPinLeft, LOW);
+      digitalWrite(stepPinRight, LOW);
+      stepStartTime = currentMillis;
+      totalStepsTaken += 2;
+      
+      if (checkMode && i % 100 == 0) {
+        Serial.print("Backoff: ");
+        Serial.print(i);
+        Serial.print("/");
+        Serial.print(backoffSteps);
+        Serial.println(" steps");
+      }
+    }
+    
+    delay(1);
+  }
   
   if (checkMode) {
-    if (targetReached) {
-      Serial.print("Weight target reached | Actual distance: ");
-    } else {
-      Serial.print("Max distance reached | Actual distance: ");
+    Serial.println("Phase 2: Backoff completed");
+  }
+
+  // PHASE 3: Fine advance at lowest speed (0.01mm/s) for precise control
+  if (checkMode) {
+    Serial.println("Phase 3: Fine advance at 0.01mm/s for precise weight control...");
+  }
+  
+  // Restore original direction for fine advance
+  digitalWrite(dirPinLeft, movingPositive ? HIGH : LOW);
+  digitalWrite(dirPinRight, movingPositive ? HIGH : LOW);
+  delay(1);
+  
+  float fineSpeed = 0.01;
+  float fineStepsPerSecond = fineSpeed * stepsPerMm;
+  int fineStepInterval = (fineStepsPerSecond > 0) ? (1000.0 / fineStepsPerSecond) : 1000;
+  int fineAdvanceLimit = 2.0 * stepsPerMm;
+  
+  for (int i = 0; i < fineAdvanceLimit; i++) {
+    unsigned long currentMillis = millis();
+    
+    // Check weight frequently during fine advance
+    if (currentMillis - lastWeightCheckTime >= 50) {
+      lastWeightCheckTime = currentMillis;
+      
+      if (scale.is_ready()) {
+        float currentWeight = scale.get_units(1);
+        
+        // ALWAYS report weight in data mode
+        if (!checkMode) {
+          float fineDistance = (float)i / stepsPerMm;
+          Serial.print(totalStepsTaken);
+          Serial.print("\t");
+          Serial.print(totalDistanceMoved + fineDistance, 6);
+          Serial.print("\t");
+          Serial.println(currentWeight, 6);
+        }
+        
+        // Check if we've reached the target again
+        bool shouldStop = false;
+        if (movingPositive) {
+          shouldStop = (currentWeight <= targetWeight);
+        } else {
+          shouldStop = (currentWeight >= targetWeight);
+        }
+        
+        if (shouldStop) {
+          if (checkMode) {
+            Serial.print("Phase 3: Fine advance completed at step ");
+            Serial.print(i);
+            Serial.print(" | Final weight: ");
+            Serial.print(currentWeight, 3);
+            Serial.print(" | Total fine advance: ");
+            Serial.print((float)i / stepsPerMm, 3);
+            Serial.println("mm");
+          }
+          break;
+        }
+        
+        if (checkMode && currentMillis - lastProgressReportTime >= 200) {
+          lastProgressReportTime = currentMillis;
+          Serial.print("Fine advance: ");
+          Serial.print(i);
+          Serial.print(" steps | Weight: ");
+          Serial.print(currentWeight, 3);
+          Serial.print(" | Target: ");
+          Serial.println(targetWeight, 3);
+        }
+      }
     }
-    Serial.print(actualDistance, 2);
-    Serial.print("mm | Total distance: ");
-    Serial.print(totalDistanceMoved, 2);
+    
+    // Fine step timing
+    if (currentMillis - stepStartTime >= fineStepInterval) {
+      digitalWrite(stepPinLeft, HIGH);
+      digitalWrite(stepPinRight, HIGH);
+      delayMicroseconds(500);
+      digitalWrite(stepPinLeft, LOW);
+      digitalWrite(stepPinRight, LOW);
+      stepStartTime = currentMillis;
+      totalStepsTaken += 2;
+      continue;
+    }
+    
+    if (Serial.available()) {
+      String command = Serial.readString();
+      processCommand(command);
+      if (command.length() > 0) {
+        isMoving = false;
+        if (checkMode) Serial.println("Movement interrupted by command");
+        return;
+      }
+    }
+    
+    delay(1);
+  }
+  
+  // Calculate final distance
+  float mainDistance = (float)finalStepCount / stepsPerMm;
+  float fineDistance = (float)totalStepsTaken / stepsPerMm / 2 - mainDistance - 1.0;
+  totalDistanceMoved += mainDistance - 1.0 + fineDistance;
+  
+  if (checkMode) {
+    Serial.print("Final result: Main ");
+    Serial.print(mainDistance, 3);
+    Serial.print("mm + Fine ");
+    Serial.print(fineDistance, 3);
+    Serial.print("mm - Backoff 1.0mm = Total ");
+    Serial.print(totalDistanceMoved, 3);
     Serial.println("mm");
   }
   
