@@ -7,8 +7,8 @@
 #include <vector>
 
 // ============= CONFIG WIFI =================
-const char* ssid     = "DESKTOP-LU47COE 9850";
-const char* password = "qweasdzxc123qwe";
+const char* ssid     = "PONDOK AGNIA 2";
+const char* password = "01191998";
 
 // Web server at port 80
 WebServer server(80);
@@ -22,10 +22,10 @@ DateTime softwareTime;
 
 // Servo
 Servo feederServo;
-const int servoPin = 27;
+const int servoPin = 13;
 
 // Motor
-const int motorPin = 26;
+const int motorPin = 12;
 
 // Level sensors
 const int levelA = 33;
@@ -33,8 +33,13 @@ const int levelB = 32;
 const int levelC = 25;
 
 // Ultrasonic
-const int trigPin = 14;
-const int echoPin = 12;
+const int trigPin = 15;
+const int echoPin = 2;
+
+// LED
+const int WebAvailable = 17;
+const int RTCAvailable = 16;
+const int FishAvailable = 4;
 
 // Feeding settings
 float gramsPerTurn = 20.0;
