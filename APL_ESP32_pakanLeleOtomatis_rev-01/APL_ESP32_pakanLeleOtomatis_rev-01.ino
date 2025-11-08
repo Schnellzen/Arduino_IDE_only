@@ -68,8 +68,8 @@ float gramsPerSecond = 10.0;
 float feedAmountGrams = 30.0;
 
 // Motor speed settings
-int motorSpeed = 200;
-int minMotorSpeed = 100;
+int motorSpeed = 20;
+int minMotorSpeed = 0;
 int maxMotorSpeed = 255;
 
 // Continuous Servo settings
@@ -259,6 +259,7 @@ void setup() {
   server.on("/wifi-update", handleWiFiUpdate);
   server.on("/history", handleHistory);
   server.on("/set-time", handleSetTime); // NEW: Browser time endpoint
+  server.on("/set-time-manual", handleSetTimeManual); //used for web time syncing
   server.begin();
   Serial.println("HTTP server started");
 
@@ -270,65 +271,100 @@ void setup() {
 // ================== BROWSER TIME SYNC IMPLEMENTATION ==================
 
 void handleTime() {
-  // NEW: Use browser time instead of compilation time
+  // BULLETPROOF version with multiple submission methods
   String html = "<!DOCTYPE html><html><head><title>Sync Time</title>";
   html += "<meta charset='UTF-8'>";
   html += "<meta name='viewport' content='width=device-width, initial-scale=1'>";
+  html += "<meta http-equiv='refresh' content='5;url=/set-time-manual'>"; // FALLBACK: Auto-refresh after 5 seconds
   html += "<style>";
   html += "body { font-family: Arial, sans-serif; margin: 40px; background: #f0f0f0; text-align: center; }";
   html += ".card { background: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); display: inline-block; }";
   html += ".spinner { border: 4px solid #f3f3f3; border-top: 4px solid #007bff; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin: 20px auto; }";
   html += "@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }";
+  html += ".status { margin: 15px 0; font-size: 16px; }";
+  html += ".fallback { margin-top: 20px; font-size: 14px; color: #666; }";
   html += "</style>";
-  html += "<script>";
-  html += "function syncWithBrowserTime() {";
-  html += "  var now = new Date();";
-  html += "  console.log('Browser time: ' + now.toString());";
-  html += "  ";
-  html += "  // Create hidden form with browser time";
-  html += "  var form = document.createElement('form');";
-  html += "  form.method = 'POST';";
-  html += "  form.action = '/set-time';";
-  html += "  ";
-  html += "  function addInput(name, value) {";
-  html += "    var input = document.createElement('input');";
-  html += "    input.type = 'hidden';";
-  html += "    input.name = name;";
-  html += "    input.value = value;";
-  html += "    form.appendChild(input);";
-  html += "  }";
-  html += "  ";
-  html += "  // Add time components to form";
-  html += "  addInput('year', now.getFullYear());";
-  html += "  addInput('month', now.getMonth() + 1);"; // JavaScript months are 0-11
-  html += "  addInput('day', now.getDate());";
-  html += "  addInput('hour', now.getHours());";
-  html += "  addInput('minute', now.getMinutes());";
-  html += "  addInput('second', now.getSeconds());";
-  html += "  ";
-  html += "  document.body.appendChild(form);";
-  html += "  form.submit();";
-  html += "}";
-  html += "// Auto-execute on page load";
-  html += "window.onload = function() {";
-  html += "  setTimeout(syncWithBrowserTime, 1000);"; // Small delay to show UI
-  html += "};";
-  html += "</script>";
   html += "</head><body>";
   html += "<div class='card'>";
   html += "<h1>🕐 Syncing Time</h1>";
   html += "<div class='spinner'></div>";
-  html += "<p>Getting current time from your browser...</p>";
-  html += "<p><small>This uses your computer/phone's accurate time</small></p>";
+  html += "<div class='status' id='status'>Getting current time...</div>";
+  html += "<div class='fallback'>If this takes too long, <a href='/set-time-manual'>click here</a></div>";
   html += "</div>";
+  
+  // METHOD 1: Hidden form with auto-submit
+  html += "<form id='timeForm' action='/set-time' method='POST'>";
+  html += "<input type='hidden' name='year' id='year'>";
+  html += "<input type='hidden' name='month' id='month'>";
+  html += "<input type='hidden' name='day' id='day'>";
+  html += "<input type='hidden' name='hour' id='hour'>";
+  html += "<input type='hidden' name='minute' id='minute'>";
+  html += "<input type='hidden' name='second' id='second'>";
+  html += "</form>";
+  
+  html += "<script>";
+  html += "// Simple and direct approach";
+  html += "function submitTime() {";
+  html += "  var now = new Date();";
+  html += "  ";
+  html += "  // Fill form fields";
+  html += "  document.getElementById('year').value = now.getFullYear();";
+  html += "  document.getElementById('month').value = now.getMonth() + 1;";
+  html += "  document.getElementById('day').value = now.getDate();";
+  html += "  document.getElementById('hour').value = now.getHours();";
+  html += "  document.getElementById('minute').value = now.getMinutes();";
+  html += "  document.getElementById('second').value = now.getSeconds();";
+  html += "  ";
+  html += "  // Update status";
+  html += "  document.getElementById('status').innerHTML = 'Time detected: ' + now.toLocaleString();";
+  html += "  ";
+  html += "  // Submit form immediately";
+  html += "  document.getElementById('timeForm').submit();";
+  html += "}";
+  html += "";
+  html += "// Try to submit immediately";
+  html += "submitTime();";
+  html += "</script>";
   html += "</body></html>";
   
   server.send(200, "text/html; charset=utf-8", html);
 }
 
+// NEW: Manual fallback endpoint
+void handleSetTimeManual() {
+  // Use the current time on the ESP32 as fallback
+  DateTime now = getCurrentTime();
+  
+  String html = "<!DOCTYPE html><html><head><title>Manual Time Sync</title>";
+  html += "<meta charset='UTF-8'>";
+  html += "<style>body{font-family:Arial,sans-serif;margin:40px;background:#f0f0f0;text-align:center;}";
+  html += ".card{background:white;padding:30px;border-radius:10px;box-shadow:0 2px 5px rgba(0,0,0,0.1);display:inline-block;}</style>";
+  html += "<script>";
+  html += "setTimeout(function() { window.location='/'; }, 3000);";
+  html += "</script>";
+  html += "</head><body>";
+  html += "<div class='card'>";
+  html += "<h1>⏰ Manual Time Set</h1>";
+  html += "<p>Using ESP32 system time:</p>";
+  html += "<p><b>" + String(now.timestamp()) + "</b></p>";
+  html += "<p><small>Redirecting to main page...</small></p>";
+  html += "</div>";
+  html += "</body></html>";
+  
+  server.send(200, "text/html", html);
+}
+
 void handleSetTime() {
-  // NEW: Handle the browser time submission
+  Serial.println("=== TIME SYNC REQUEST ===");
+  
   if (server.method() == HTTP_POST) {
+    Serial.println("📨 POST Data Received:");
+    
+    // Log all received arguments
+    for (int i = 0; i < server.args(); i++) {
+      Serial.println("  " + server.argName(i) + ": " + server.arg(i));
+    }
+    
     if (server.hasArg("year") && server.hasArg("month") && server.hasArg("day") && 
         server.hasArg("hour") && server.hasArg("minute") && server.hasArg("second")) {
       
@@ -339,7 +375,9 @@ void handleSetTime() {
       int minute = server.arg("minute").toInt();
       int second = server.arg("second").toInt();
       
-      // Validate the time (basic validation)
+      Serial.printf("📅 Parsed Time: %d-%02d-%02d %02d:%02d:%02d\n", year, month, day, hour, minute, second);
+      
+      // Validate time
       if (year >= 2024 && year <= 2030 &&
           month >= 1 && month <= 12 &&
           day >= 1 && day <= 31 &&
@@ -351,27 +389,32 @@ void handleSetTime() {
         
         if (rtcConnected) {
           rtc.adjust(browserTime);
-          Serial.println("✅ RTC synchronized with browser time: " + String(browserTime.timestamp()));
+          Serial.println("✅ RTC synchronized with browser time!");
         } else {
           softwareTime = browserTime;
           softwareClockMillis = millis();
-          Serial.println("✅ Software clock synchronized with browser time: " + String(browserTime.timestamp()));
+          Serial.println("✅ Software clock synchronized with browser time!");
         }
         
+        Serial.println("🕐 New system time: " + String(browserTime.timestamp()));
         blinkLED(RTCAvailable, 3, 200);
         
-        // Success response with redirect
-        server.send(200, "text/html", 
-          "<script>alert('✅ Time synchronized successfully!\\\\nNew time: " + 
-          String(browserTime.timestamp()) + "'); window.location='/';</script>");
-        return;
+        // Success response
+        server.sendHeader("Location", "/?time_sync=success");
+        server.send(303);
+        
+      } else {
+        Serial.println("❌ Invalid time values");
+        server.sendHeader("Location", "/?time_sync=error");
+        server.send(303);
       }
+    } else {
+      Serial.println("❌ Missing time arguments");
+      server.sendHeader("Location", "/?time_sync=error");
+      server.send(303);
     }
-    
-    // Error response
-    server.send(200, "text/html", 
-      "<script>alert('❌ Failed to sync time! Invalid time received.'); window.location='/';</script>");
   } else {
+    Serial.println("❌ Not a POST request");
     server.sendHeader("Location", "/");
     server.send(303);
   }
@@ -1489,8 +1532,9 @@ void handleSettings() {
           "' max='" + String(maxMotorSpeed) + "' value='" + String(motorSpeed) + "' step='5' oninput='updateSpeedValue(this.value)'>";
   html += "<span id='speedValue'>" + String(motorPercent) + "% (" + String(motorSpeed) + "/255)</span><br>";
   html += "<div class='speed-info'>";
-  html += "<small>Slow: " + String(minMotorSpeed) + "/255 (" + String((minMotorSpeed * 100) / 255) + "%) - Gentle feeding</small><br>";
-  html += "<small>Fast: " + String(maxMotorSpeed) + "/255 (" + String((maxMotorSpeed * 100) / 255) + "%) - Quick feeding</small>";
+  html += "<small>Stop: 0/255 (0%) - Motor off</small><br>";
+  html += "<small>Slow: 50/255 (~20%) - Very gentle feeding</small><br>";
+  html += "<small>Fast: " + String(maxMotorSpeed) + "/255 (" + String((maxMotorSpeed * 100) / 255) + "%) - Maximum speed</small>";
   html += "</div><br>";
   
   html += "<label for='servoSpeed'>Servo Speed:</label>";

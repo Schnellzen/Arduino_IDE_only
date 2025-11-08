@@ -45,7 +45,7 @@ void HX711::set_gain(byte gain) {
 	}
 
 	digitalWrite(PD_SCK, LOW);
-	read();
+	//read(); //comment out --> fixing wrong gain set
 }
 
 long HX711::read() {
