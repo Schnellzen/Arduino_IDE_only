@@ -30,10 +30,10 @@ LiquidCrystal_I2C lcd(0x27, 20, 4); // Set the LCD address to 0x27 for a 20x4 di
 // ESP32 DOIT
 #define thermoDO    14
 #define thermoCS    13
-#define thermoCLK   26
+#define thermoCLK   27
 #define DT_HX711    15
 #define SCK_HX711   2
-#define NTC_PIN     27  // Your NTC analog pin
+#define NTC_PIN     33  // Your NTC analog pin
 
 #else
 // Fallback (other Arduino boards)
@@ -57,8 +57,8 @@ float force = 0.0; // Changed from long to float
 
 // NTC setup - CORRECTED FOR REVERSED WIRING
 const float FIXED_RESISTOR = 10000.0;    // 10kΩ fixed resistor
-const float RESISTANCE_AT_25 = 5400.0;   // 5.4kΩ at 25°C
-const float BETA_VALUE = 3750.0;         // Typical beta value
+const float RESISTANCE_AT_25 = 15000.0;   // 5.4kΩ at 25°C
+const float BETA_VALUE = 3435.0;         // Typical beta value
 const float NOMINAL_TEMP = 25.0;
 const int ADC_RESOLUTION = 4095;
 const float VREF = 3.3;
@@ -195,7 +195,7 @@ void loop() {
     if (isnan(thermocoupleTemp)) thermocoupleTemp = 0.0;
 
     // send data - now includes NTC temperature
-    String dataString = String(force, 0) + "," + String(thermocoupleTemp, 0) + "," + String(ntcTemp, 1);
+    String dataString = String(force, 0) + "," + String(force/10, 1) + "," + String(thermocoupleTemp, 0) + "," + String(ntcTemp, 1);
     Serial.println(dataString);
     #if defined(ESP32)
     SerialBT.println(dataString);
