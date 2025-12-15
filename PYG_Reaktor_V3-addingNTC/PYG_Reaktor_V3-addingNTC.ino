@@ -195,7 +195,7 @@ void loop() {
     if (isnan(thermocoupleTemp)) thermocoupleTemp = 0.0;
 
     // send data - now includes NTC temperature
-    String dataString = String(force, 0) + "," + String(force/10, 1) + "," + String(thermocoupleTemp, 0) + "," + String(ntcTemp, 1);
+    String dataString = String(force, 0) + "," + String(force/410, 3) + "," + String(thermocoupleTemp, 0) + "," + String(ntcTemp, 1);
     Serial.println(dataString);
     #if defined(ESP32)
     SerialBT.println(dataString);
